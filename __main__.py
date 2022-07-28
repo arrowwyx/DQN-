@@ -213,6 +213,7 @@ df_test['reward'] = np.zeros(len(df_test))
 
 env = stock_market(df_test)
 env.preprocess()
+dqn.EPSILON = 0
 
 # 初始化状态：第五天收盘时
     
