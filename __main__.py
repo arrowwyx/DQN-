@@ -11,6 +11,8 @@ import torch.nn.functional as F                 # 导入torch.nn.functional
 import numpy as np                              # 导入numpy
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 #正常显示画图时出现的中文和负号
 plt.rcParams['font.sans-serif']=['SimHei']
@@ -36,28 +38,39 @@ class Net(nn.Module):
         # nn.Module的子类函数必须在构造函数中执行父类的构造函数
         super(Net, self).__init__()                                             # 等价与nn.Module.__init__()
 
-        self.fc1 = nn.Linear(N_STATES, 128)                                     # 设置第一个全连接层(输入层到隐藏层): 状态数个神经元到128个神经元
+        self.fc1 = nn.Linear(N_STATES, 128)                                         # 设置第一个全连接层(输入层到隐藏层): 状态数个神经元到128个神经元
         self.fc1.weight.data.normal_(0, 1)                                      # 权重初始化 (均值为0，方差为.1的正态分布)
-        self.bn1 = nn.BatchNorm1d(1)
+        self.bn1 = nn.BatchNorm1d(128)
         self.fc2 = nn.Linear(128, 256)                                          # 设置第一个全连接层(输入层到隐藏层): 128个神经元到256个神经元
         self.fc2.weight.data.normal_(0, 1)                                      # 权重初始化 (均值为0，方差为.1的正态分布)
-        self.bn2 = nn.BatchNorm1d(1)
+        self.bn2 = nn.BatchNorm1d(256)
         self.fc3 = nn.Linear(256, N_ACTIONS)                                    # 设置第三个全连接层(隐藏层到输出层): 256个神经元到动作数个神经元
         self.fc3.weight.data.normal_(0, 1)                                      # 权重初始化 (均值为0，方差为.1的正态分布)
         self.sm = nn.Softmax(dim=1)
         
-    def forward(self, x):                                                       # 定义forward函数 (x为状态)
-        x = F.relu(((self.fc1(x))))                                               # 连接输入层到隐藏层，且使用激励函数ReLU来处理经过隐藏层后的值
-        #x = x.view(128,1)
-        #x = self.bn1(x)
-        #x = x.view(1,128)
-        x = F.relu(((self.fc2(x))))
-        #x = x.view(256,1)
-        #x = self.bn2(x)
-        #x = x.view(1,256)
+    def train_forward(self, x):                                                       # 定义forward函数 (x为状态)
+        self.bn1.train()
+        self.bn2.train()
+        x = (self.fc1(x))                                                       # 连接输入层到隐藏层，且使用激励函数ReLU来处理经过隐藏层后的值
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = (self.fc2(x))
+        x = self.bn2(x)
+        x = F.relu(x)
         actions_value = self.sm(self.fc3(x))                                    # 连接隐藏层到输出层，获得最终的输出值 (即动作值)
         return actions_value                                                    # 返回动作值
-
+    
+    def eval_forward(self, x):
+        self.bn1.eval()
+        self.bn2.eval()
+        x = (self.fc1(x))                                                       # 连接输入层到隐藏层，且使用激励函数ReLU来处理经过隐藏层后的值
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = (self.fc2(x))
+        x = self.bn2(x)
+        x = F.relu(x)
+        actions_value = self.sm(self.fc3(x))                                    # 连接隐藏层到输出层，获得最终的输出值 (即动作值)
+        return actions_value  
 
 # 定义DQN类 (定义两个网络)
 class DQN(object):
@@ -75,7 +88,7 @@ class DQN(object):
         x = x.contiguous().view(1,N_STATES)                                                                           
         #x = torch.unsqueeze(x, 0)                                               # 将x转换成32-bit floating point形式，并在dim=0增加维数为1的维度
         if np.random.uniform() > self.EPSILON:                                       # 生成一个在[0, 1)内的随机数，如果大于EPSILON，选择最优动作
-            actions_value = self.eval_net.forward(x)                            # 通过对评估网络输入状态x，前向传播获得动作值
+            actions_value = self.eval_net.eval_forward(x)                            # 通过对评估网络输入状态x，前向传播获得动作值
             action = torch.max(actions_value, 1)[1].data.numpy()                # 输出每一行最大值的索引，并转化为numpy ndarray形式
             action = action[0]                                                  # 输出action的第一个数
         else:                                                                   # 随机选择动作
@@ -110,9 +123,9 @@ class DQN(object):
         # 将32个s_抽出，转为32-bit floating point形式，并存储到b_s中，b_s_为32行20列
 
         # 获取32个transition的评估值和目标值，并利用损失函数和优化器进行评估网络参数更新
-        q_eval = self.eval_net(b_s).gather(1, b_a)
+        q_eval = self.eval_net.train_forward(b_s).gather(1, b_a)
         # eval_net(b_s)通过评估网络输出32行每个b_s对应的一系列动作值，然后.gather(1, b_a)代表对每行对应索引b_a的Q值提取进行聚合
-        q_next = self.target_net(b_s_).detach()
+        q_next = self.target_net.train_forward(b_s_).detach()
         # q_next不进行反向传递误差，所以detach；q_next表示通过目标网络输出32行每个b_s_对应的一系列动作值
         q_target = b_r + GAMMA * q_next.max(1)[0].view(BATCH_SIZE, 1)
         # q_next.max(1)[0]表示只返回每一行的最大值，不返回索引(长度为32的一维张量)；.view()表示把前面所得到的一维张量变成(BATCH_SIZE, 1)的形状；最终通过公式得到目标值
