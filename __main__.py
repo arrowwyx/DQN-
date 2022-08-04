@@ -222,7 +222,6 @@ df_test['reward'] = np.zeros(len(df_test))
 
 
 # 用训练好的模型在测试集上回测，
-# 策略描述：一旦DQN网络发出买入/卖出的信号，必须持有/平仓五天（即五天内保持仓位不变）
 
 env = stock_market(df_test)
 env.preprocess()
